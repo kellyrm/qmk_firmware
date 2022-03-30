@@ -47,16 +47,26 @@ enum custom_keycodes {
     HEX_PFX,
 };
 
+enum layer_mode {
+    LYR_NONE,
+    LYR_HELD_0,
+    LYR_HELD_1,
+    LYR_STICKY,
+    LYR_LOCK,
+};
+
 uint8_t pressed_nums = 0;
 uint8_t entered_num  = 0;
-uint16_t mods = 0;
+uint16_t mods_tap = 0;
 uint16_t mods_lock = 0;
+uint16_t mods_held = 0;
 uint8_t cur_layer = BASE;
-bool layer_lock = false;
+enum layer_mode layer_mode = LYR_NONE;
 
 void num_pressed(uint8_t num);
 void num_released(void);
 void mod_pressed(uint16_t mod);
+void mod_released(uint16_t mod);
 void key_pressed(uint16_t code);
 void key_released(uint16_t code);
 void layer_pressed(uint8_t layer);
@@ -72,12 +82,12 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_TAB,   KC_SCLN,   KC_COMMA,  KC_DOT,      KC_P,        KC_Y,     KC_1,        KC_0,     KC_F,     KC_G,      KC_C,       KC_R,     KC_L,     KC_BSLS,
         KC_ESC,   KC_A,      KC_O,      KC_E,        KC_U,        KC_I,     LSFT(KC_6),  KC_BSPC,  KC_D,     KC_H,      KC_T,       KC_N,     KC_S,     KC_MINUS,
         KC_GRV,   KC_QUOTE,  KC_Q,      KC_J,        KC_K,        KC_X,                            KC_B,     KC_M,      KC_W,       KC_V,     KC_Z,     KC_SLASH,
-        KC_AT,    KC_NO,     KC_NO,     KC_LCTL,     OSL(UTIL),             MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_LCTL,    KC_NO,    KC_INS,   KC_DEL,
-                                                     KC_LSFT,     KC_ENT,   RGB_TOG,     RGB_MOD,  KC_BSPC,  KC_SPC
+        KC_AT,    KC_NO,     KC_NO,     KC_NO,       OSL(UTIL),             MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_NO,      KC_NO,    KC_INS,   KC_DEL,
+                                                     KC_LSFT,     KC_ENT,   KC_NO,       KC_NO,    KC_LCTL,  KC_SPC
     ),
 
     [UTIL] = LAYOUT_moonlander(
-        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______, _______, _______, _______,  _______,
+        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______, _______, _______, _______,  RGB_TOG,
         _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, _______, _______, _______, _______,  _______,
         _______,   NUM_8,    NUM_4,    NUM_2,   NUM_1,      HEX_PFX,  _______,           _______, _______, KC_LEFT, KC_DOWN, KC_UP,   KC_RIGHT, _______,
         _______,   _______,  _______,  _______, _______,    _______,                             _______, _______, KC_MPRV, KC_MNXT, _______,  _______,
@@ -97,11 +107,19 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
 void clear(void)
 {
-    mods = 0;
-    if (cur_layer != BASE && !layer_lock)
+    mods_tap = 0;
+    if (cur_layer != BASE)
     {
-        cur_layer = BASE;
-        layer_move(cur_layer);
+        if (layer_mode == LYR_STICKY)
+        {
+            cur_layer = BASE;
+            layer_move(cur_layer);
+            layer_mode = LYR_NONE;
+        }
+        else if (layer_mode == LYR_HELD_0)
+        {
+            layer_mode = LYR_HELD_1;
+        }
     }
     set_color();
 }
@@ -109,7 +127,12 @@ void clear(void)
 void unlock(void)
 {
     mods_lock = 0;
-    layer_lock = false;
+    if (layer_mode == LYR_LOCK)
+    {
+        layer_mode = LYR_NONE;
+        cur_layer = BASE;
+        layer_move(cur_layer);
+    }
     clear();
 }
 
@@ -139,32 +162,52 @@ void mod_pressed (uint16_t mod)
     if (mods_lock & mod)
     {
         mods_lock &= ~mod;
-        mods &= ~mod;
+        mods_tap &= ~mod;
     }
     else
-        mods |= mod;
+    {
+        mods_tap |= mod;
+        mods_held |= mod;
+    }
+    set_color();
+}
+
+void mod_released (uint16_t mod)
+{
+    mods_held &= ~mod;
     set_color();
 }
 
 void key_pressed (uint16_t code)
 {
-    tap_code16(code | mods | mods_lock);
+    switch (code)
+    {
+    case KC_A ... KC_Z:
+    case KC_MINUS:
+    case KC_GRAVE:
+    case KC_SLASH:
+        break;
+    default:
+        mods_tap &= ~QK_LSFT;
+        mods_lock &= ~QK_LSFT;
+        set_color();
+        break;
+    }
+
+    tap_code16(code | mods_tap | mods_lock | mods_held);
     clear();
 }
+
 
 void key_released (uint16_t code)
 {
     return;
-    unregister_code16(code | mods | mods_lock);
-    if (mods)
-        mods = 0;
-
 }
 
 void set_color(void)
 {
     uint16_t set;
-    set = mods | mods_lock;
+    set = mods_held | mods_lock | mods_tap;
 
     if (cur_layer != BASE)
     {
@@ -247,8 +290,9 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             mod_pressed(QK_LALT);
             return false;
         case MOD_LOCK:
-            mods_lock = mods;
-            layer_lock = cur_layer;
+            mods_lock = mods_tap;
+            if (cur_layer != BASE)
+                layer_mode = LYR_LOCK;
             return false;
         case MOD_UNLK:
             unlock();
@@ -258,11 +302,12 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             if (lyr == cur_layer)
             {
                 cur_layer = BASE;
-                layer_lock = false;
+                layer_mode = LYR_NONE;
             }
             else
             {
                 cur_layer = lyr;
+                layer_mode = LYR_HELD_0;
             }
             layer_move(cur_layer);
             set_color();
@@ -286,14 +331,40 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             num_released();
             return false;
         case KC_LSFT:
+            mod_released(QK_LSFT);
+            return false;
         case KC_LCTL:
+            mod_released(QK_LCTL);
+            return false;
         case KC_LALT:
-        case MOD_LOCK:
-        case MOD_UNLK:
+            mod_released(QK_LALT);
+            return false;
         case RGB_MOD:
         case RGB_TOG:
+        case MOD_LOCK:
+        case MOD_UNLK:
             return false;
         case QK_ONE_SHOT_LAYER ... QK_ONE_SHOT_LAYER_MAX:
+            lyr = keycode & 0xff;
+            if (lyr == cur_layer)
+            {
+                switch (layer_mode)
+                {
+                case LYR_NONE:
+                case LYR_HELD_1:
+                    cur_layer = BASE;
+                    layer_move(cur_layer);
+                    layer_mode = LYR_NONE;
+                    set_color();
+                    break;
+                case LYR_HELD_0:
+                    layer_mode = LYR_STICKY;
+                    break;
+                case LYR_STICKY:
+                case LYR_LOCK:
+                    break;
+                }
+            }
             return false;
         case KC_ESC:
             return true;
