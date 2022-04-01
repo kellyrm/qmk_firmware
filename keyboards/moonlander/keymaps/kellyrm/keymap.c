@@ -166,7 +166,7 @@ void mod_pressed (uint16_t mod)
     }
     else
     {
-        mods_tap |= mod;
+        mods_tap ^= mod;
         mods_held |= mod;
     }
     set_color();
