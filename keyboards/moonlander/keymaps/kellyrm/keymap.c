@@ -167,8 +167,8 @@ void mod_pressed (uint16_t mod)
     else
     {
         mods_tap ^= mod;
-        mods_held |= mod;
     }
+    mods_held |= mod;
     set_color();
 }
 
@@ -182,10 +182,13 @@ void key_pressed (uint16_t code)
 {
     switch (code)
     {
+    // keys that don't break shift
     case KC_A ... KC_Z:
     case KC_MINUS:
     case KC_GRAVE:
     case KC_SLASH:
+    case KC_SPC:
+    case KC_BSPC:
         break;
     default:
         mods_tap &= ~QK_LSFT;
