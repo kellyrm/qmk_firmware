@@ -198,6 +198,11 @@ void key_pressed (uint16_t code)
     }
 
     tap_code16(code | mods_tap | mods_lock | mods_held);
+
+    // vim command protection
+    if (code == KC_SCLN)
+        mods_held &= ~QK_LSFT;
+
     clear();
 }
 
