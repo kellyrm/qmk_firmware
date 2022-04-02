@@ -19,3 +19,5 @@
 #pragma once
 
 #define ORYX_CONFIGURATOR
+
+#define ENABLE_RGB_MATRIX_PIXEL_RAIN

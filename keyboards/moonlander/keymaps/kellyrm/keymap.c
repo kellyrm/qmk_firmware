@@ -20,14 +20,20 @@
 #include "version.h"
 #include "rgb_matrix/rgb_matrix.h"
 #include <print.h>
+#include "timer.h"
+#include "pointing_device.h"
+
+#define MOUSE_PERIOD 10
 
 #define COLOR_BASE  HSV_MAGENTA
 #define COLOR_SH    HSV_RED
+#define COLOR_ALTS  HSV_YELLOW
+#define COLOR_ALT   HSV_GREEN
+#define COLOR_LYR   HSV_SPRINGGREEN
 #define COLOR_CTL   HSV_CYAN
 #define COLOR_CTLS  HSV_PURPLE
-#define COLOR_ALT   HSV_GREEN
-#define COLOR_ALTS  HSV_YELLOW
-#define COLOR_LYR   HSV_SPRINGGREEN
+#define COLOR_RPT   HSV_BLUE
+#define COLOR_MOUSE HSV_CHARTREUSE
 #define COLOR_MLTPL HSV_WHITE
 
 enum layers {
@@ -45,6 +51,10 @@ enum custom_keycodes {
     MOD_LOCK,
     MOD_UNLK,
     HEX_PFX,
+    PT_LF,
+    PT_RT,
+    PT_UP,
+    PT_DN,
 };
 
 enum layer_mode {
@@ -57,19 +67,31 @@ enum layer_mode {
 
 uint8_t pressed_nums = 0;
 uint8_t entered_num  = 0;
+
 uint16_t mods_tap = 0;
 uint16_t mods_lock = 0;
 uint16_t mods_held = 0;
+
 uint8_t cur_layer = BASE;
 enum layer_mode layer_mode = LYR_NONE;
 
+uint16_t last_key = 0;
+uint16_t lock_key = 0;
+uint32_t repeat_future = 0;
+
+uint16_t pt_dir = 0;
+
 void num_pressed(uint8_t num);
-void num_released(void);
+void num_released(uint8_t num);
+
 void mod_pressed(uint16_t mod);
 void mod_released(uint16_t mod);
+
 void key_pressed(uint16_t code);
 void key_released(uint16_t code);
+
 void layer_pressed(uint8_t layer);
+
 void clear(void);
 void unlock(void);
 void set_color(void);
@@ -87,11 +109,11 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     ),
 
     [UTIL] = LAYOUT_moonlander(
-        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______, _______, _______, _______,  RGB_TOG,
-        _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, _______, _______, _______, _______,  _______,
-        _______,   NUM_8,    NUM_4,    NUM_2,   NUM_1,      KC_0,    HEX_PFX,           _______, _______, KC_LEFT, KC_DOWN, KC_UP,   KC_RIGHT, _______,
-        _______,   _______,  _______,  _______, _______,    _______,                             _______, _______, KC_MPRV, KC_MNXT, _______,  _______,
-        EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          KC_VOLU, KC_VOLD, KC_MUTE, _______,  RESET,
+        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______,  KC_MUTE, _______, _______,  RGB_TOG,
+        _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, KC_VOLU,  KC_VOLD, KC_MPRV, KC_MNXT,  _______,
+        _______,   NUM_8,    NUM_4,    NUM_2,   NUM_1,      KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
+        _______,   _______,  _______,  _______, _______,    _______,                             _______, PT_LF,    PT_DN,   PT_UP,   PT_RT,    _______,
+        EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          KC_BTN1,  KC_BTN2, _______, _______,  RESET,
                                                 _______,    _______, _______,           _______, _______, _______
     ),
 
@@ -108,6 +130,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 void clear(void)
 {
     mods_tap = 0;
+    pt_dir = 0;
     if (cur_layer != BASE)
     {
         if (layer_mode == LYR_STICKY)
@@ -127,6 +150,10 @@ void clear(void)
 void unlock(void)
 {
     mods_lock = 0;
+    lock_key = 0;
+    entered_num = 0;
+    pressed_nums = 0;
+    pt_dir = 0;
     if (layer_mode == LYR_LOCK)
     {
         layer_mode = LYR_NONE;
@@ -142,11 +169,14 @@ void num_pressed (uint8_t num)
     entered_num |= num;
 }
 
-void num_released (void)
+void num_released (uint8_t num)
 {
     if (pressed_nums > 0)
         pressed_nums --;
-    if (pressed_nums == 0 && entered_num > 0)
+
+    if (lock_key)
+        entered_num &= ~num;
+    else if (pressed_nums == 0 && entered_num > 0)
     {
         if (entered_num < 0xa)
             tap_code (KC_Z + entered_num);
@@ -190,6 +220,10 @@ void key_pressed (uint16_t code)
     case KC_SPC:
     case KC_BSPC:
         break;
+    case KC_BTN1:
+    case KC_BTN2:
+        tap_code(code);
+        return;
     default:
         mods_tap &= ~QK_LSFT;
         mods_lock &= ~QK_LSFT;
@@ -197,7 +231,15 @@ void key_pressed (uint16_t code)
         break;
     }
 
-    tap_code16(code | mods_tap | mods_lock | mods_held);
+    if (lock_key == code)
+        lock_key = 0;
+    else if (lock_key)
+        lock_key = code;
+    else
+    {
+        tap_code16(code | mods_tap | mods_lock | mods_held);
+        last_key = code;
+    }
 
     // vim command protection
     if (code == KC_SCLN)
@@ -217,7 +259,14 @@ void set_color(void)
     uint16_t set;
     set = mods_held | mods_lock | mods_tap;
 
-    if (cur_layer != BASE)
+    if (lock_key)
+    {
+        if (cur_layer != BASE)
+            rgb_matrix_sethsv_noeeprom(COLOR_MOUSE);
+        else
+            rgb_matrix_sethsv_noeeprom(COLOR_RPT);
+    }
+    else if (cur_layer != BASE)
     {
         if (set)
             rgb_matrix_sethsv_noeeprom(COLOR_MLTPL);
@@ -288,6 +337,36 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case NUM_8:
             num_pressed(8);
             return false;
+        case KC_I:
+            if (lock_key)
+                num_pressed(1);
+            else
+                key_pressed(keycode);
+            return false;
+        case KC_U:
+            if (lock_key)
+                num_pressed(2);
+            else
+                key_pressed(keycode);
+            return false;
+        case KC_E:
+            if (lock_key)
+                num_pressed(4);
+            else
+                key_pressed(keycode);
+            return false;
+        case KC_O:
+            if (lock_key)
+                num_pressed(8);
+            else
+                key_pressed(keycode);
+            return false;
+        case KC_A:
+            if (lock_key)
+                num_pressed(0x10);
+            else
+                key_pressed(keycode);
+            return false;
         case KC_LSFT:
             mod_pressed(QK_LSFT);
             return false;
@@ -301,6 +380,13 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             mods_lock = mods_tap;
             if (cur_layer != BASE)
                 layer_mode = LYR_LOCK;
+            else if (!mods_lock)
+            {
+                lock_key = last_key;
+                last_key = 0;
+                repeat_future = timer_read32();
+                set_color();
+            }
             return false;
         case MOD_UNLK:
             unlock();
@@ -323,6 +409,23 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case KC_ESC:
             unlock();
             return true;
+        case PT_LF:
+        case PT_DN:
+        case PT_UP:
+        case PT_RT:
+            if (lock_key == keycode)
+                lock_key = 0;
+            else
+            {
+                layer_mode = LYR_LOCK;
+                lock_key = keycode;
+                // repeat_future = timer_read32();
+                // cur_layer = UTIL;
+                // layer_move(UTIL);
+                // layer_state = LYR_LOCK;
+                // set_color();
+            }
+            return false;
         default:
             key_pressed(keycode);
             return false;
@@ -333,10 +436,46 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         switch (keycode)
         {
         case NUM_1:
+            num_released(1);
+            return false;
         case NUM_2:
+            num_released(2);
+            return false;
         case NUM_4:
+            num_released(4);
+            return false;
         case NUM_8:
-            num_released();
+            num_released(8);
+            return false;
+        case KC_I:
+            if (lock_key)
+                num_released(1);
+            else
+                key_released(keycode);
+            return false;
+        case KC_U:
+            if (lock_key)
+                num_released(2);
+            else
+                key_released(keycode);
+            return false;
+        case KC_E:
+            if (lock_key)
+                num_released(4);
+            else
+                num_released(keycode);
+            return false;
+        case KC_O:
+            if (lock_key)
+                num_released(8);
+            else
+                key_released(keycode);
+            return false;
+        case KC_A:
+            if (lock_key)
+                num_released(0x10);
+            else
+                key_released(keycode);
             return false;
         case KC_LSFT:
             mod_released(QK_LSFT);
@@ -376,10 +515,60 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             return false;
         case KC_ESC:
             return true;
+        case PT_LF:
+        case PT_DN:
+        case PT_UP:
+        case PT_RT:
+            return false;
         default:
             key_released(keycode);
             return false;
         }
     }
     return true;
+}
+
+void matrix_scan_user()
+{
+    uint32_t now;
+    report_mouse_t mouse;
+
+    if (lock_key && entered_num)
+    {
+        now = timer_read32();
+        if (timer_expired32(now, repeat_future))
+        {
+            switch (lock_key)
+            {
+            case PT_LF:
+            case PT_DN:
+            case PT_UP:
+            case PT_RT:
+                memset(&mouse, 0, sizeof(mouse));
+                switch (lock_key)
+                {
+                case PT_LF:
+                    mouse.x = -entered_num;
+                    break;
+                case PT_DN:
+                    mouse.y = entered_num;
+                    break;
+                case PT_UP:
+                    mouse.y = -entered_num;
+                    break;
+                case PT_RT:
+                    mouse.x = entered_num;
+                    break;
+                }
+                pointing_device_set_report(mouse);
+                if (entered_num)
+                    pointing_device_send();
+                repeat_future = now + MOUSE_PERIOD;
+                break;
+            default:
+                tap_code16(lock_key);
+                repeat_future = now + (1000 / (entered_num << 3));
+            }
+        }
+    }
 }
