@@ -22,69 +22,32 @@
 #include <print.h>
 #include "timer.h"
 #include "pointing_device.h"
+#include "custom.h"
 
-#define MOUSE_PERIOD 10
-
-#define COLOR_BASE  HSV_MAGENTA
-#define COLOR_SH    HSV_RED
-#define COLOR_ALTS  HSV_YELLOW
-#define COLOR_ALT   HSV_GREEN
-#define COLOR_LYR   HSV_SPRINGGREEN
-#define COLOR_CTL   HSV_CYAN
-#define COLOR_CTLS  HSV_PURPLE
-#define COLOR_RPT   HSV_BLUE
-#define COLOR_MOUSE HSV_CHARTREUSE
-#define COLOR_MLTPL HSV_WHITE
-
-enum layers {
-    BASE,  // default layer
-    UTIL,  // util keys
-    SYMB,  // symbols
+static struct lock locks[] = {
+    [LCK_SHIFT] = LOCK_MOD(QK_LSFT, COLOR_SH),
+    [LCK_CTRL]  = LOCK_MOD(QK_LCTL, COLOR_CTL),
+    [LCK_ALT]   = LOCK_MOD(QK_LALT, COLOR_ALT),
+    [LCK_RPT]   = {
+        .state = LOCK_OFF,
+        .mods = 0,
+        .set_active = &set_active_repeat,
+        .process_record = &process_record_repeat,
+        .color = COLOR_RPT,
+        ._lyr = (1 << BIN),
+    },
+    [LCK_UTIL]  = LOCK_LYR((1 << UTIL) | (1 << BIN), COLOR_LYR),
+    [LCK_FN]    = LOCK_LYR(1 << FN, COLOR_MLTPL),
 };
 
-enum custom_keycodes {
-    VRSN = ML_SAFE_RANGE,
-    NUM_1,
-    NUM_2,
-    NUM_4,
-    NUM_8,
-    MOD_LOCK,
-    MOD_UNLK,
-    HEX_PFX,
-    PT_LF,
-    PT_RT,
-    PT_UP,
-    PT_DN,
-    NXT_FN,
-};
 
-enum layer_mode {
-    LYR_NONE,
-    LYR_HELD_0,
-    LYR_HELD_1,
-    LYR_STICKY,
-    LYR_LOCK,
-};
+static struct bin_entry bin_entry;
 
-uint8_t pressed_nums = 0;
-uint8_t entered_num  = 0;
+static struct key_rpt key_rpt;
 
-uint16_t mods_tap = 0;
-uint16_t mods_lock = 0;
-uint16_t mods_held = 0;
+// uint16_t pt_dir = 0;
 
-uint8_t cur_layer = BASE;
-enum layer_mode layer_mode = LYR_NONE;
-
-uint16_t last_key = 0;
-uint16_t lock_key = 0;
-uint8_t lock_key_rpt = 0;
-uint32_t repeat_future = 0;
-
-uint16_t pt_dir = 0;
-
-uint8_t next_function = 0;
-
+/*
 void num_pressed(uint8_t num);
 void num_released(uint8_t num);
 
@@ -95,10 +58,22 @@ void key_pressed(uint16_t code);
 void key_released(uint16_t code);
 
 void layer_pressed(uint8_t layer);
-
 void clear(void);
 void unlock(void);
 void set_color(void);
+*/
+
+/*
+    LAYOUT_moonlander(
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______,                     _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______,          _______,   _______,          _______, _______, _______, _______, _______,
+                                            _______, _______, _______,   _______, _______, _______
+    ),
+*/
+
 
 // clang-format off
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
@@ -108,49 +83,232 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_TAB,   KC_SCLN,   KC_COMMA,  KC_DOT,      KC_P,        KC_Y,     KC_1,        KC_0,     KC_F,     KC_G,      KC_C,       KC_R,     KC_L,     KC_BSLS,
         KC_ESC,   KC_A,      KC_O,      KC_E,        KC_U,        KC_I,     LSFT(KC_6),  KC_BSPC,  KC_D,     KC_H,      KC_T,       KC_N,     KC_S,     KC_MINUS,
         KC_GRV,   KC_QUOTE,  KC_Q,      KC_J,        KC_K,        KC_X,                            KC_B,     KC_M,      KC_W,       KC_V,     KC_Z,     KC_SLASH,
-        KC_AT,    KC_NO,     KC_NO,     KC_NO,       OSL(UTIL),             MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_BTN1,    KC_BTN2,  KC_INS,   KC_DEL,
+        KC_AT,    KC_NO,     KC_NO,     KC_NO,       MOD_UTIL,              MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_BTN1,    KC_BTN2,  KC_INS,   KC_DEL,
                                                      KC_LSFT,     KC_ENT,   KC_NO,       KC_LSFT,  KC_LCTL,  KC_SPC
     ),
 
+    [BIN] = LAYOUT_moonlander(
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, NUM_8,   NUM_4,   NUM_2,   NUM_1,   _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______,                     _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______,          _______,   _______,          _______, _______, _______, _______, _______,
+                                            _______, _______, _______,   _______, _______, _______
+    ),
+
     [UTIL] = LAYOUT_moonlander(
-        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, KC_BTN1,  KC_BTN2, _______, _______,  RGB_TOG,
+        _______,   _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______,  _______, _______, _______,  RGB_TOG,
         _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, _______,  _______, _______, _______,  _______,
-        NXT_FN,    NUM_8,    NUM_4,    NUM_2,   NUM_1,      KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
+        NXT_FN,    _______,  _______,  _______, _______,    KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
         _______,   _______,  _______,  _______, _______,    _______,                             _______, PT_LF,    PT_DN,   PT_UP,   PT_RT,    _______,
         EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          _______,  _______, _______, _______,  RESET,
                                                 _______,    _______, _______,           _______, _______, _______
     ),
 
-    [SYMB] = LAYOUT_moonlander(
-        _______,  KC_F7,      KC_F5,    KC_F3,       KC_F1,       KC_F9,    KC_F11,      KC_F12,   KC_F10,   KC_F2,    KC_F4,      KC_F6,    KC_F8,    _______,
-        _______,  KC_GRV,     _______,  _______,     _______,     _______,  _______,     _______,  _______,  KC_PERC,  S(KC_EQL),  S(KC_1),  S(KC_3),  _______,
-        _______,  KC_TILD,    KC_LBRC,  S(KC_LBRC),  S(KC_9),     KC_EQL,   _______,     _______,  S(KC_8),  S(KC_0),  S(KC_RBRC), KC_RBRC,  KC_AT,    _______,
-        _______,  _______,    _______,  _______,     _______,     _______,                         _______,  _______,  _______,    _______,  _______,  _______,
-        _______,  _______,    _______,  _______,     _______,               _______,     _______,            _______,  _______,    _______,  _______,  _______,
-                                                     _______,     _______,  _______,     _______,  _______,  _______
+    [FN] = LAYOUT_moonlander(
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, FN_8,    FN_4,    FN_2,    FN_1,    _______, _______,   _______, _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______, _______,                     _______, _______, _______, _______, _______, _______,
+        _______, _______, _______, _______, _______,          _______,   _______,          _______, _______, _______, _______, _______,
+                                            _______, _______, _______,   _______, _______, _______
     ),
 };
 
-void clear(void)
+void set_active_layer(struct lock *lock, bool active)
 {
-    mods_tap = 0;
-    pt_dir = 0;
-    if (cur_layer != BASE)
-    {
-        if (layer_mode == LYR_STICKY)
-        {
-            cur_layer = BASE;
-            layer_move(cur_layer);
-            layer_mode = LYR_NONE;
-        }
-        else if (layer_mode == LYR_HELD_0)
-        {
-            layer_mode = LYR_HELD_1;
-        }
-    }
-    set_color();
+    if (active)
+        layer_or(lock->_lyr);
+    else
+        layer_and(~lock->_lyr);
 }
 
+void set_active_mod(struct lock *lock, bool active)
+{
+    if (active)
+        lock->mods = lock->_mod;
+    else
+        lock->mods = 0;
+}
+
+void set_active_repeat(struct lock *l, bool active)
+{
+    if (active)
+    {
+        layer_or(1 << BIN);
+        key_rpt.press_count = 1;
+        key_rpt.future = timer_read32();
+    }
+    else
+        layer_and(~(1 << BIN));
+
+    bin_entry.entered = 0;
+}
+
+bool process_record_repeat(uint16_t keycode)
+{
+    if (key_rpt.lock == keycode)
+    {
+        if (++key_rpt.press_count > 3)
+            process_lock(LCK_RPT, false);
+    }
+    else
+    {
+        key_rpt.lock = keycode;
+        key_rpt.press_count = 1;
+    }
+
+    return false;
+}
+
+bool process_bin(uint8_t val, bool pressed, bool fn)
+{
+    if (val == 0)
+        return false;
+
+    if (pressed)
+    {
+        bin_entry.pressed |= val;
+        bin_entry.entered |= val;
+    }
+    else
+    {
+        bin_entry.pressed &= ~val;
+
+        if (!LOCK_IS_ACTIVE(locks[LCK_RPT].state) && bin_entry.pressed == 0)
+        {
+            if (fn)
+                send_key(KC_CAPS + bin_entry.entered);
+            else if (bin_entry.entered < 0xa)
+                send_key(KC_Z + bin_entry.entered);
+            else
+                send_key(KC_A + bin_entry.entered - 0xa);
+            bin_entry.entered = 0;
+        }
+    }
+    return false;
+}
+
+bool process_lock(struct lock *l, bool pressed)
+{
+    switch (l->state)
+    {
+        // initial state
+        case LOCK_OFF:
+            if (pressed)
+                set_lock_state(l, LOCK_PRESSED);
+            break;
+        // presed without sending keys -> sticky
+        case LOCK_PRESSED:
+            if (!pressed)
+                set_lock_state(l, LOCK_STICKY);
+            break;
+        // held and send keys -> release off
+        case LOCK_HELD:
+            if (!pressed)
+                set_lock_state(l, LOCK_OFF);
+            break;
+        // locked -> press to turn off
+        case LOCK_STICKY:
+        case LOCK_LOCKED:
+            if (pressed)
+                set_lock_state(l, LOCK_OFF);
+            break;
+    }
+
+    return false;
+}
+
+void send_key(uint16_t kc)
+{
+    int i;
+    struct lock *l;
+    bool lock_process = false;
+
+    // most symbols n stuff turn off shift
+    switch (kc & 0xff)
+    {
+        // keys that don't break shift
+        case KC_A ... KC_Z:
+        case KC_1 ... KC_0:
+        case KC_MINUS:
+        case KC_GRAVE:
+        case KC_SLASH:
+        case KC_SPC:
+        case KC_BSPC:
+        case KC_QUOT:
+            break;
+        default:
+            set_lock_state(&locks[LCK_SHIFT], LOCK_OFF);
+            break;
+    }
+
+    for (i = 0; i < LCK_MAX; i++)
+    {
+        l = &locks[i];
+        if (LOCK_IS_ACTIVE(l->state))
+        {
+            kc |= l->mods;
+            if (l->state == LOCK_PRESSED)
+                set_lock_state(l, LOCK_HELD);
+            else if (l->state == LOCK_STICKY)
+                set_lock_state(l, LOCK_OFF);
+
+            if (l->process_record && l->process_record(kc))
+            {
+                // first layer to return true stops further processing
+                lock_process = true;
+                break;
+            }
+        }
+    }
+
+    key_rpt.lock = kc;
+    key_rpt.press_count = 1;
+
+    if (!lock_process)
+        tap_code16(kc);
+
+   // return false;
+}
+
+void lock(bool set)
+{
+    int i;
+    struct lock *l;
+
+    for (i = 0; i < LCK_MAX; i++)
+    {
+        l = &locks[i];
+        if (LOCK_IS_ACTIVE(l->state))
+        {
+            if (set)
+                set_lock_state(l, LOCK_LOCKED);
+            else
+                set_lock_state(l, LOCK_OFF);
+        }
+    }
+
+    if (!set)
+        bin_entry.entered = 0;
+
+    // set_color();
+}
+
+void set_lock_state(struct lock *l, enum lock_state state)
+{
+    bool was_active;
+
+    if (l->state != state)
+    {
+        was_active = LOCK_IS_ACTIVE(l->state);
+        l->state = state;
+        if (was_active != LOCK_IS_ACTIVE(l->state) && l->set_active)
+            l->set_active(l, !was_active);
+    }
+}
+
+/*
 void unlock(void)
 {
     mods_lock = 0;
@@ -158,14 +316,15 @@ void unlock(void)
     entered_num = 0;
     pressed_nums = 0;
     pt_dir = 0;
-    if (layer_mode == LYR_LOCK)
+    //if (layer_mode == LYR_LOCK)
     {
-        layer_mode = LYR_NONE;
+     //   layer_mode = LYR_NONE;
         cur_layer = BASE;
         layer_move(cur_layer);
     }
     clear();
 }
+
 
 void num_pressed (uint8_t num)
 {
@@ -259,22 +418,22 @@ void key_pressed (uint16_t code)
 }
 
 
+
 void key_released (uint16_t code)
 {
     return;
 }
+*/
 
 void set_color(void)
 {
-    uint16_t set;
-    set = mods_held | mods_lock | mods_tap;
-
-    if (lock_key)
+   /* 
+    if (LOCK_IS_ACTIVE(locks[LCK_RPT].state))
     {
         if (cur_layer != BASE)
             rgb_matrix_sethsv_noeeprom(COLOR_MOUSE);
         else
-            rgb_matrix_sethsv_noeeprom(COLOR_RPT);
+        rgb_matrix_sethsv_noeeprom(COLOR_RPT);
     }
     else if (cur_layer != BASE)
     {
@@ -311,116 +470,64 @@ void set_color(void)
             break;
         }
     }
+    */
 }
 
 void keyboard_post_init_user(void) {
     rgb_matrix_enable_noeeprom();
     rgb_matrix_mode_noeeprom(RGB_MATRIX_SOLID_COLOR);
-    set_color();
+    rgb_matrix_sethsv_noeeprom(COLOR_BASE);
+    // set_color();
 }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
-    uint8_t lyr;
+    bool pressed = record->event.pressed;
 
-    if (record->event.pressed) {
-        switch (keycode) {
-        case VRSN:
-            SEND_STRING (QMK_KEYBOARD "/" QMK_KEYMAP " @ " QMK_VERSION);
-            return false;
+    switch (keycode) {
         case HEX_PFX:
-            SEND_STRING ("0x");
+            if (pressed)
+                SEND_STRING ("0x");
             return false;
         case RGB_TOG:
-            rgb_matrix_toggle();
-            return false;
-        case RGB_MOD:
+            if (pressed)
+                rgb_matrix_toggle();
             return false;
         case NUM_1:
-            num_pressed(1);
-            return false;
+            return process_bin(1, pressed, false);
         case NUM_2:
-            num_pressed(2);
-            return false;
+            return process_bin(2, pressed, false);
         case NUM_4:
-            num_pressed(4);
-            return false;
+            return process_bin(4, pressed, false);
         case NUM_8:
-            num_pressed(8);
-            return false;
-        case KC_I:
-            if (lock_key)
-                num_pressed(1);
-            else
-                key_pressed(keycode);
-            return false;
-        case KC_U:
-            if (lock_key)
-                num_pressed(2);
-            else
-                key_pressed(keycode);
-            return false;
-        case KC_E:
-            if (lock_key)
-                num_pressed(4);
-            else
-                key_pressed(keycode);
-            return false;
-        case KC_O:
-            if (lock_key)
-                num_pressed(8);
-            else
-                key_pressed(keycode);
-            return false;
-        case KC_A:
-            if (lock_key)
-                num_pressed(0x10);
-            else
-                key_pressed(keycode);
-            return false;
+            return process_bin(8, pressed, false);
+        case FN_1:
+            return process_bin(1, pressed, true);
+        case FN_2:
+            return process_bin(2, pressed, true);
+        case FN_4:
+            return process_bin(4, pressed, true);
+        case FN_8:
+            return process_bin(8, pressed, true);
         case KC_LSFT:
-            mod_pressed(QK_LSFT);
-            return false;
+            return process_lock(&locks[LCK_SHIFT], pressed);
         case KC_LCTL:
-            mod_pressed(QK_LCTL);
-            return false;
+            return process_lock(&locks[LCK_CTRL], pressed);
         case KC_LALT:
-            mod_pressed(QK_LALT);
-            return false;
+            return process_lock(&locks[LCK_ALT], pressed);
+        case MOD_UTIL:
+            return process_lock(&locks[LCK_UTIL], pressed);
         case MOD_LOCK:
-            if (cur_layer != BASE)
-                layer_mode = LYR_LOCK;
-            else if (!mods_tap)
-            {
-                lock_key = last_key;
-                lock_key_rpt = 0;
-                last_key = 0;
-                repeat_future = timer_read32();
-                set_color();
-            }
-            else
-                mods_lock = mods_tap;
+            if (pressed)
+                lock(true);
             return false;
         case MOD_UNLK:
-            unlock();
-            return false;
-        case QK_ONE_SHOT_LAYER ... QK_ONE_SHOT_LAYER_MAX:
-            lyr = keycode & 0xff;
-            if (lyr == cur_layer)
-            {
-                cur_layer = BASE;
-                layer_mode = LYR_NONE;
-            }
-            else
-            {
-                cur_layer = lyr;
-                layer_mode = LYR_HELD_0;
-            }
-            layer_move(cur_layer);
-            set_color();
+            lock(false);
             return false;
         case KC_ESC:
-            unlock();
+            if (pressed)
+                lock(false);
             return true;
+        /*
         case PT_LF:
         case PT_DN:
         case PT_UP:
@@ -430,155 +537,54 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case NXT_FN:
             next_function = 1;
             return false;
+        */
         case KC_BTN1:
         case KC_BTN2:
             return true;
         default:
-            key_pressed(keycode);
+            if (pressed)
+                send_key(keycode);
             return false;
-        }
     }
-    else
-    {
-        switch (keycode)
-        {
-        case NUM_1:
-            num_released(1);
-            return false;
-        case NUM_2:
-            num_released(2);
-            return false;
-        case NUM_4:
-            num_released(4);
-            return false;
-        case NUM_8:
-            num_released(8);
-            return false;
-        case KC_I:
-            if (lock_key)
-                num_released(1);
-            else
-                key_released(keycode);
-            return false;
-        case KC_U:
-            if (lock_key)
-                num_released(2);
-            else
-                key_released(keycode);
-            return false;
-        case KC_E:
-            if (lock_key)
-                num_released(4);
-            else
-                num_released(keycode);
-            return false;
-        case KC_O:
-            if (lock_key)
-                num_released(8);
-            else
-                key_released(keycode);
-            return false;
-        case KC_A:
-            if (lock_key)
-                num_released(0x10);
-            else
-                key_released(keycode);
-            return false;
-        case KC_LSFT:
-            mod_released(QK_LSFT);
-            return false;
-        case KC_LCTL:
-            mod_released(QK_LCTL);
-            return false;
-        case KC_LALT:
-            mod_released(QK_LALT);
-            return false;
-        case RGB_MOD:
-        case RGB_TOG:
-        case MOD_LOCK:
-        case MOD_UNLK:
-        case NXT_FN:
-            return false;
-        case QK_ONE_SHOT_LAYER ... QK_ONE_SHOT_LAYER_MAX:
-            lyr = keycode & 0xff;
-            if (lyr == cur_layer)
-            {
-                switch (layer_mode)
-                {
-                case LYR_NONE:
-                case LYR_HELD_1:
-                    cur_layer = BASE;
-                    layer_move(cur_layer);
-                    layer_mode = LYR_NONE;
-                    set_color();
-                    break;
-                case LYR_HELD_0:
-                    layer_mode = LYR_STICKY;
-                    break;
-                case LYR_STICKY:
-                case LYR_LOCK:
-                    break;
-                }
-            }
-            return false;
-        case KC_ESC:
-        case KC_BTN1:
-        case KC_BTN2:
-            return true;
-        case PT_LF:
-        case PT_DN:
-        case PT_UP:
-        case PT_RT:
-            return false;
-        default:
-            key_released(keycode);
-            return false;
-        }
-    }
+
     return true;
 }
 
 void matrix_scan_user()
 {
     uint32_t now;
-    report_mouse_t mouse;
+    //report_mouse_t mouse;
 
-    if (lock_key && entered_num)
+    if (LOCK_IS_ACTIVE(locks[LCK_RPT].state) && key_rpt.lock && bin_entry.pressed)
     {
         now = timer_read32();
-        if (timer_expired32(now, repeat_future))
+        if (timer_expired32(now, key_rpt.future))
         {
+            tap_code16(key_rpt.lock);
+            key_rpt.future = now + (1000 / (bin_entry.pressed << 4));
+            /*
+            memset(&mouse, 0, sizeof(mouse));
             switch (lock_key)
             {
             case PT_LF:
-            case PT_DN:
-            case PT_UP:
-            case PT_RT:
-                memset(&mouse, 0, sizeof(mouse));
-                switch (lock_key)
-                {
-                case PT_LF:
-                    mouse.x = -entered_num;
-                    break;
-                case PT_DN:
-                    mouse.y = entered_num;
-                    break;
-                case PT_UP:
-                    mouse.y = -entered_num;
-                    break;
-                case PT_RT:
-                    mouse.x = entered_num;
-                    break;
-                }
-                pointing_device_set_report(mouse);
-                if (entered_num)
-                    pointing_device_send();
-                repeat_future = now + MOUSE_PERIOD;
+                mouse.x = -entered_num;
                 break;
-            default:
-                tap_code16(lock_key);
-                repeat_future = now + (1000 / (entered_num << 3));
+            case PT_DN:
+                mouse.y = entered_num;
+                break;
+            case PT_UP:
+                mouse.y = -entered_num;
+                break;
+            case PT_RT:
+                mouse.x = entered_num;
+                break;
             }
+            pointing_device_set_report(mouse);
+            if (entered_num)
+                pointing_device_send();
+            repeat_future = now + MOUSE_PERIOD;
+            }
+            */
         }
     }
 }
