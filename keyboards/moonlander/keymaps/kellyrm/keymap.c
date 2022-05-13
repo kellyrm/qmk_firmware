@@ -55,6 +55,7 @@ enum custom_keycodes {
     PT_RT,
     PT_UP,
     PT_DN,
+    NXT_FN,
 };
 
 enum layer_mode {
@@ -77,9 +78,12 @@ enum layer_mode layer_mode = LYR_NONE;
 
 uint16_t last_key = 0;
 uint16_t lock_key = 0;
+uint8_t lock_key_rpt = 0;
 uint32_t repeat_future = 0;
 
 uint16_t pt_dir = 0;
+
+uint8_t next_function = 0;
 
 void num_pressed(uint8_t num);
 void num_released(uint8_t num);
@@ -104,16 +108,16 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_TAB,   KC_SCLN,   KC_COMMA,  KC_DOT,      KC_P,        KC_Y,     KC_1,        KC_0,     KC_F,     KC_G,      KC_C,       KC_R,     KC_L,     KC_BSLS,
         KC_ESC,   KC_A,      KC_O,      KC_E,        KC_U,        KC_I,     LSFT(KC_6),  KC_BSPC,  KC_D,     KC_H,      KC_T,       KC_N,     KC_S,     KC_MINUS,
         KC_GRV,   KC_QUOTE,  KC_Q,      KC_J,        KC_K,        KC_X,                            KC_B,     KC_M,      KC_W,       KC_V,     KC_Z,     KC_SLASH,
-        KC_AT,    KC_NO,     KC_NO,     KC_NO,       OSL(UTIL),             MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_NO,      KC_NO,    KC_INS,   KC_DEL,
-                                                     KC_LSFT,     KC_ENT,   KC_NO,       KC_NO,    KC_LCTL,  KC_SPC
+        KC_AT,    KC_NO,     KC_NO,     KC_NO,       OSL(UTIL),             MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_BTN1,    KC_BTN2,  KC_INS,   KC_DEL,
+                                                     KC_LSFT,     KC_ENT,   KC_NO,       KC_LSFT,  KC_LCTL,  KC_SPC
     ),
 
     [UTIL] = LAYOUT_moonlander(
-        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______,  KC_MUTE, _______, _______,  RGB_TOG,
-        _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, KC_VOLU,  KC_VOLD, KC_MPRV, KC_MNXT,  _______,
-        _______,   NUM_8,    NUM_4,    NUM_2,   NUM_1,      KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
+        LED_LEVEL, _______,  _______,  _______, _______,    _______, _______,           _______, _______, KC_BTN1,  KC_BTN2, _______, _______,  RGB_TOG,
+        _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, _______,  _______, _______, _______,  _______,
+        NXT_FN,    NUM_8,    NUM_4,    NUM_2,   NUM_1,      KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
         _______,   _______,  _______,  _______, _______,    _______,                             _______, PT_LF,    PT_DN,   PT_UP,   PT_RT,    _______,
-        EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          KC_BTN1,  KC_BTN2, _______, _______,  RESET,
+        EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          _______,  _______, _______, _______,  RESET,
                                                 _______,    _______, _______,           _______, _______, _______
     ),
 
@@ -178,10 +182,16 @@ void num_released (uint8_t num)
         entered_num &= ~num;
     else if (pressed_nums == 0 && entered_num > 0)
     {
-        if (entered_num < 0xa)
-            tap_code (KC_Z + entered_num);
+        if (next_function)
+        {
+            last_key = KC_CAPS + entered_num;
+            tap_code(last_key);
+            next_function = 0;
+        }
+        else if (entered_num < 0xa)
+            tap_code16 ((KC_Z + entered_num) | mods_tap | mods_lock | mods_held);
         else
-            tap_code (KC_A + entered_num - 0xa);
+            tap_code16 ((KC_A + entered_num - 0xa) | mods_tap | mods_lock | mods_held);
         entered_num = 0;
         clear();
     }
@@ -189,6 +199,9 @@ void num_released (uint8_t num)
 
 void mod_pressed (uint16_t mod)
 {
+    if (lock_key)
+        lock_key = 0;
+
     if (mods_lock & mod)
     {
         mods_lock &= ~mod;
@@ -219,11 +232,8 @@ void key_pressed (uint16_t code)
     case KC_SLASH:
     case KC_SPC:
     case KC_BSPC:
+    case KC_QUOT:
         break;
-    case KC_BTN1:
-    case KC_BTN2:
-        tap_code(code);
-        return;
     default:
         mods_tap &= ~QK_LSFT;
         mods_lock &= ~QK_LSFT;
@@ -232,18 +242,18 @@ void key_pressed (uint16_t code)
     }
 
     if (lock_key == code)
-        lock_key = 0;
+    {
+        if (++lock_key_rpt > 2)
+            lock_key = 0;
+    }
     else if (lock_key)
         lock_key = code;
     else
     {
-        tap_code16(code | mods_tap | mods_lock | mods_held);
+        //                                                     :w protection
+        tap_code16((code | mods_tap | mods_lock | mods_held) & ~(last_key == KC_SCLN && code == KC_W ? QK_LSFT : 0));
         last_key = code;
     }
-
-    // vim command protection
-    if (code == KC_SCLN)
-        mods_held &= ~QK_LSFT;
 
     clear();
 }
@@ -377,16 +387,18 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             mod_pressed(QK_LALT);
             return false;
         case MOD_LOCK:
-            mods_lock = mods_tap;
             if (cur_layer != BASE)
                 layer_mode = LYR_LOCK;
-            else if (!mods_lock)
+            else if (!mods_tap)
             {
                 lock_key = last_key;
+                lock_key_rpt = 0;
                 last_key = 0;
                 repeat_future = timer_read32();
                 set_color();
             }
+            else
+                mods_lock = mods_tap;
             return false;
         case MOD_UNLK:
             unlock();
@@ -413,19 +425,14 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case PT_DN:
         case PT_UP:
         case PT_RT:
-            if (lock_key == keycode)
-                lock_key = 0;
-            else
-            {
-                layer_mode = LYR_LOCK;
-                lock_key = keycode;
-                // repeat_future = timer_read32();
-                // cur_layer = UTIL;
-                // layer_move(UTIL);
-                // layer_state = LYR_LOCK;
-                // set_color();
-            }
+            last_key = keycode;
             return false;
+        case NXT_FN:
+            next_function = 1;
+            return false;
+        case KC_BTN1:
+        case KC_BTN2:
+            return true;
         default:
             key_pressed(keycode);
             return false;
@@ -490,6 +497,7 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case RGB_TOG:
         case MOD_LOCK:
         case MOD_UNLK:
+        case NXT_FN:
             return false;
         case QK_ONE_SHOT_LAYER ... QK_ONE_SHOT_LAYER_MAX:
             lyr = keycode & 0xff;
@@ -514,6 +522,8 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             }
             return false;
         case KC_ESC:
+        case KC_BTN1:
+        case KC_BTN2:
             return true;
         case PT_LF:
         case PT_DN:

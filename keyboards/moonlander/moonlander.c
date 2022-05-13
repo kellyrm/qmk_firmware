@@ -36,6 +36,7 @@ void dynamic_macro_record_end_user(int8_t direction) {
 }
 #endif
 
+#ifdef ENABLE_LED_TASK 
 void moonlander_led_task(void) {
     if (is_launching) {
         ML_LED_1(false);
@@ -96,6 +97,8 @@ static THD_FUNCTION(LEDThread, arg) {
     }
 }
 
+#endif
+
 void keyboard_pre_init_kb(void) {
     setPinOutput(B5);
     setPinOutput(B4);
@@ -105,7 +108,9 @@ void keyboard_pre_init_kb(void) {
     writePinLow(B4);
     writePinLow(B3);
 
+#ifdef ENABLE_LED_TASK
     chThdCreateStatic(waLEDThread, sizeof(waLEDThread), NORMALPRIO - 16, LEDThread, NULL);
+#endif
 
     /* the array is initialized to 0, no need to re-set it here */
     // mcp23018_leds[0] = 0;  // blue
@@ -118,6 +123,7 @@ void keyboard_pre_init_kb(void) {
 #if !defined(MOONLANDER_USER_LEDS)
 layer_state_t layer_state_set_kb(layer_state_t state) {
     state = layer_state_set_user(state);
+    return state;
     if (is_launching || !keyboard_config.led_level) return state;
     bool LED_1 = false;
     bool LED_2 = false;
