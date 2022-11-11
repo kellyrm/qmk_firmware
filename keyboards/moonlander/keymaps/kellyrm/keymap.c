@@ -17,51 +17,51 @@
  */
 
 #include QMK_KEYBOARD_H
+#include <print.h>
 #include "version.h"
 #include "rgb_matrix/rgb_matrix.h"
-#include <print.h>
 #include "timer.h"
 #include "pointing_device.h"
+#include "eeconfig.h"
 #include "custom.h"
+#include "stdio.h"
 
 static struct lock locks[] = {
-    [LCK_SHIFT] = LOCK_MOD(QK_LSFT, COLOR_SH),
-    [LCK_CTRL]  = LOCK_MOD(QK_LCTL, COLOR_CTL),
-    [LCK_ALT]   = LOCK_MOD(QK_LALT, COLOR_ALT),
+    [LCK_SHIFT] = SIMPLE_LOCK(QK_LSFT, 0,                   COLOR_SH),
+    [LCK_CTRL]  = SIMPLE_LOCK(QK_LCTL, 0,                   COLOR_CTL),
+    [LCK_ALT]   = SIMPLE_LOCK(QK_LALT, LYR_BIN,             COLOR_ALT),
+    [LCK_FN]    = SIMPLE_LOCK(0,       LYR_FN,              COLOR_MLTPL),
+    [LCK_UTIL]  = SIMPLE_LOCK(0,      (LYR_UTIL | LYR_BIN), COLOR_LYR),
     [LCK_RPT]   = {
-        .state = LOCK_OFF,
-        .mods = 0,
-        .set_active = &set_active_repeat,
-        .process_record = &process_record_repeat,
-        .color = COLOR_RPT,
-        ._lyr = (1 << BIN),
+        .state       =  LOCK_OFF,
+        .mods        =  0,
+        .lyrs        =  LYR_BIN,
+        .color       =  COLOR_RPT,
+        .set_active  = &set_active_repeat,
+        .key_pressed = &key_pressed_repeat,
+        .cb_data     =  NULL,
     },
-    [LCK_UTIL]  = LOCK_LYR((1 << UTIL) | (1 << BIN), COLOR_LYR),
-    [LCK_FN]    = LOCK_LYR(1 << FN, COLOR_MLTPL),
+    [LCK_MOUSE] = SIMPLE_LOCK(0,      (LYR_BIN | LYR_MOUSE), COLOR_MLTPL),
 };
 
-
 static struct bin_entry bin_entry;
+static struct key_rpt   key_rpt;
+static struct mouse_ctl mouse_ctl;
 
-static struct key_rpt key_rpt;
+#define ENABLE_PROFILE 0
+#if ENABLE_PROFILE
+#define N_SAMPLES 1024
+static uint8_t samples[N_SAMPLES];
+static uint32_t profile_start;
+static uint32_t last_sample;
+static int32_t profile_progress;
+static uint8_t profile_active = 0;
+#endif
 
-// uint16_t pt_dir = 0;
-
-/*
-void num_pressed(uint8_t num);
-void num_released(uint8_t num);
-
-void mod_pressed(uint16_t mod);
-void mod_released(uint16_t mod);
-
-void key_pressed(uint16_t code);
-void key_released(uint16_t code);
-
-void layer_pressed(uint8_t layer);
-void clear(void);
-void unlock(void);
-void set_color(void);
-*/
+#define ENABLE_STATS 1
+#if ENABLE_STATS
+uint32_t keypresses[MATRIX_ROWS][MATRIX_COLS] = {0};
+#endif
 
 /*
     LAYOUT_moonlander(
@@ -81,10 +81,10 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         // dollar ampersand    bracket    brace          brace     paren     equal      asterisk    paren     percent    plus      bracket exclamation   pound
         S(KC_4),  S(KC_7),   KC_LBRC,   S(KC_LBRC),  S(KC_RBRC),  S(KC_9),  KC_EQL,      S(KC_8),  S(KC_0),  KC_PERC,   S(KC_EQL),  KC_RBRC,  S(KC_1),  S(KC_3),
         KC_TAB,   KC_SCLN,   KC_COMMA,  KC_DOT,      KC_P,        KC_Y,     KC_1,        KC_0,     KC_F,     KC_G,      KC_C,       KC_R,     KC_L,     KC_BSLS,
-        KC_ESC,   KC_A,      KC_O,      KC_E,        KC_U,        KC_I,     LSFT(KC_6),  KC_BSPC,  KC_D,     KC_H,      KC_T,       KC_N,     KC_S,     KC_MINUS,
+        KC_ESC,   KC_A,      KC_O,      KC_E,        KC_U,        KC_I,     S(KC_6),     KC_BSPC,  KC_D,     KC_H,      KC_T,       KC_N,     KC_S,     KC_MINUS,
         KC_GRV,   KC_QUOTE,  KC_Q,      KC_J,        KC_K,        KC_X,                            KC_B,     KC_M,      KC_W,       KC_V,     KC_Z,     KC_SLASH,
-        KC_AT,    KC_NO,     KC_NO,     KC_NO,       MOD_UTIL,              MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_BTN1,    KC_BTN2,  KC_INS,   KC_DEL,
-                                                     KC_LSFT,     KC_ENT,   KC_NO,       KC_LSFT,  KC_LCTL,  KC_SPC
+        KC_AT,    KC_NO,     KC_NO,     KC_ESC,      MOD_UTIL,              MOD_UNLK,    MOD_LOCK,           KC_LALT,   KC_BTN1,    KC_BTN2,  KC_INS,   KC_DEL,
+                                                     KC_LSFT,     KC_ENT,   KC_ESC,      KC_NO,    KC_LCTL,  KC_SPC
     ),
 
     [BIN] = LAYOUT_moonlander(
@@ -97,10 +97,10 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     ),
 
     [UTIL] = LAYOUT_moonlander(
-        _______,   _______,  _______,  _______, _______,    _______, _______,           _______, _______, _______,  _______, _______, _______,  RGB_TOG,
+        PROFILE,   STAT_PR,  STAT_RS,  _______, _______,    _______, _______,           _______, _______, _______,  _______, _______, _______,  RGB_TOG,
         _______,   KC_SCLN,  KC_COMMA, KC_DOT,  S(KC_SCLN), _______, _______,           _______, _______, _______,  _______, _______, _______,  _______,
-        NXT_FN,    _______,  _______,  _______, _______,    KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
-        _______,   _______,  _______,  _______, _______,    _______,                             _______, PT_LF,    PT_DN,   PT_UP,   PT_RT,    _______,
+        MOD_FN,    _______,  _______,  _______, _______,    KC_0,    HEX_PFX,           _______, _______, KC_LEFT,  KC_DOWN, KC_UP,   KC_RIGHT, _______,
+        _______,   _______,  _______,  _______, _______,    _______,                             _______, PT_LEFT,  PT_DOWN, PT_UP,   PT_RIGHT, _______,
         EEP_RST,   _______,  _______,  _______, _______,             _______,           _______,          _______,  _______, _______, _______,  RESET,
                                                 _______,    _______, _______,           _______, _______, _______
     ),
@@ -113,39 +113,29 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         _______, _______, _______, _______, _______,          _______,   _______,          _______, _______, _______, _______, _______,
                                             _______, _______, _______,   _______, _______, _______
     ),
+
+    [MOUSE] = LAYOUT_moonlander(
+        _______,   _______, _______, _______, _______, _______,   _______,   _______, _______,   _______, _______, _______, _______,   _______,
+        _______,   _______, _______, _______, _______, _______,   _______,   _______, _______,   _______, _______, _______, _______,   _______,
+        MOUSE_ESC, _______, _______, _______, _______, MOUSE_HLV, _______,   _______, _______,   _______, _______, _______, _______, MOUSE_REV,
+        _______,   _______, _______, _______, _______, _______,                       _______,   _______, _______, _______, _______,   _______,
+        _______,   _______, _______, _______, _______,            _______,   _______,            _______, _______, _______, _______,   _______,
+                                              _______, _______,   _______,   _______, _______, MOUSE_DBL
+    ),
 };
 
-void set_active_layer(struct lock *lock, bool active)
-{
-    if (active)
-        layer_or(lock->_lyr);
-    else
-        layer_and(~lock->_lyr);
-}
-
-void set_active_mod(struct lock *lock, bool active)
-{
-    if (active)
-        lock->mods = lock->_mod;
-    else
-        lock->mods = 0;
-}
-
-void set_active_repeat(struct lock *l, bool active)
+void set_active_repeat(bool active, void *data)
 {
     if (active)
     {
-        layer_or(1 << BIN);
         key_rpt.press_count = 1;
         key_rpt.future = timer_read32();
     }
-    else
-        layer_and(~(1 << BIN));
 
     bin_entry.entered = 0;
 }
 
-bool process_record_repeat(uint16_t keycode)
+bool key_pressed_repeat(uint16_t keycode, void *data)
 {
     if (key_rpt.lock == keycode)
     {
@@ -179,6 +169,8 @@ bool process_bin(uint8_t val, bool pressed, bool fn)
         {
             if (fn)
                 send_key(KC_CAPS + bin_entry.entered);
+            else if (LOCK_IS_ACTIVE(locks[LCK_MOUSE].state))
+                process_mouse(bin_entry.entered);
             else if (bin_entry.entered < 0xa)
                 send_key(KC_Z + bin_entry.entered);
             else
@@ -226,22 +218,32 @@ void send_key(uint16_t kc)
     bool lock_process = false;
 
     // most symbols n stuff turn off shift
-    switch (kc & 0xff)
+    switch (kc & 0x7f)
     {
         // keys that don't break shift
         case KC_A ... KC_Z:
         case KC_1 ... KC_0:
+        case KC_BSLS:
         case KC_MINUS:
-        case KC_GRAVE:
         case KC_SLASH:
+        case KC_INS:
+        case KC_DEL:
         case KC_SPC:
         case KC_BSPC:
         case KC_QUOT:
+        case KC_SCLN:
+        case KC_COMMA:
+        case KC_DOT:
+        case KC_GRAVE:
+        case KC_TAB:
             break;
         default:
             set_lock_state(&locks[LCK_SHIFT], LOCK_OFF);
             break;
     }
+
+    if (((key_rpt.lock & 0x7f) == KC_SCLN) && (locks[LCK_SHIFT].state == LOCK_HELD) && ((kc & 0x7f) == KC_W))
+        set_lock_state(&locks[LCK_SHIFT], LOCK_OFF);
 
     for (i = 0; i < LCK_MAX; i++)
     {
@@ -254,7 +256,7 @@ void send_key(uint16_t kc)
             else if (l->state == LOCK_STICKY)
                 set_lock_state(l, LOCK_OFF);
 
-            if (l->process_record && l->process_record(kc))
+            if (l->key_pressed && l->key_pressed(kc, l->cb_data))
             {
                 // first layer to return true stops further processing
                 lock_process = true;
@@ -276,12 +278,14 @@ void lock(bool set)
 {
     int i;
     struct lock *l;
+    bool rpt = true;
 
     for (i = 0; i < LCK_MAX; i++)
     {
         l = &locks[i];
         if (LOCK_IS_ACTIVE(l->state))
         {
+            rpt = false;
             if (set)
                 set_lock_state(l, LOCK_LOCKED);
             else
@@ -292,141 +296,46 @@ void lock(bool set)
     if (!set)
         bin_entry.entered = 0;
 
-    // set_color();
+    if (set && rpt)
+        set_lock_state(&locks[LCK_RPT], LOCK_LOCKED);
 }
 
 void set_lock_state(struct lock *l, enum lock_state state)
 {
     bool was_active;
+    int i;
+    layer_state_t lyrs = LYR_BASE;
 
     if (l->state != state)
     {
         was_active = LOCK_IS_ACTIVE(l->state);
         l->state = state;
-        if (was_active != LOCK_IS_ACTIVE(l->state) && l->set_active)
-            l->set_active(l, !was_active);
-    }
-}
-
-/*
-void unlock(void)
-{
-    mods_lock = 0;
-    lock_key = 0;
-    entered_num = 0;
-    pressed_nums = 0;
-    pt_dir = 0;
-    //if (layer_mode == LYR_LOCK)
-    {
-     //   layer_mode = LYR_NONE;
-        cur_layer = BASE;
-        layer_move(cur_layer);
-    }
-    clear();
-}
-
-
-void num_pressed (uint8_t num)
-{
-    pressed_nums++;
-    entered_num |= num;
-}
-
-void num_released (uint8_t num)
-{
-    if (pressed_nums > 0)
-        pressed_nums --;
-
-    if (lock_key)
-        entered_num &= ~num;
-    else if (pressed_nums == 0 && entered_num > 0)
-    {
-        if (next_function)
+        if (was_active != LOCK_IS_ACTIVE(l->state))
         {
-            last_key = KC_CAPS + entered_num;
-            tap_code(last_key);
-            next_function = 0;
+            if (l->set_active)
+                l->set_active(!was_active, l->cb_data);
+
+            for (i = 0; i < LCK_MAX; i++)
+            {
+                l = &locks[i];
+                if (l->lyrs && LOCK_IS_ACTIVE(l->state))
+                    lyrs |= l->lyrs;
+            }
+
+            layer_state_set(lyrs);
         }
-        else if (entered_num < 0xa)
-            tap_code16 ((KC_Z + entered_num) | mods_tap | mods_lock | mods_held);
-        else
-            tap_code16 ((KC_A + entered_num - 0xa) | mods_tap | mods_lock | mods_held);
-        entered_num = 0;
-        clear();
     }
+
+    //if (LOCK_IS_ACTIVE(state))
+     //   rgb_matrix_sethsv_noeeprom();
+
 }
 
-void mod_pressed (uint16_t mod)
+void set_color(color_t color)
 {
-    if (lock_key)
-        lock_key = 0;
-
-    if (mods_lock & mod)
-    {
-        mods_lock &= ~mod;
-        mods_tap &= ~mod;
-    }
-    else
-    {
-        mods_tap ^= mod;
-    }
-    mods_held |= mod;
-    set_color();
-}
-
-void mod_released (uint16_t mod)
-{
-    mods_held &= ~mod;
-    set_color();
-}
-
-void key_pressed (uint16_t code)
-{
-    switch (code)
-    {
-    // keys that don't break shift
-    case KC_A ... KC_Z:
-    case KC_MINUS:
-    case KC_GRAVE:
-    case KC_SLASH:
-    case KC_SPC:
-    case KC_BSPC:
-    case KC_QUOT:
-        break;
-    default:
-        mods_tap &= ~QK_LSFT;
-        mods_lock &= ~QK_LSFT;
-        set_color();
-        break;
-    }
-
-    if (lock_key == code)
-    {
-        if (++lock_key_rpt > 2)
-            lock_key = 0;
-    }
-    else if (lock_key)
-        lock_key = code;
-    else
-    {
-        //                                                     :w protection
-        tap_code16((code | mods_tap | mods_lock | mods_held) & ~(last_key == KC_SCLN && code == KC_W ? QK_LSFT : 0));
-        last_key = code;
-    }
-
-    clear();
-}
-
-
-
-void key_released (uint16_t code)
-{
-    return;
-}
-*/
-
-void set_color(void)
-{
+    // rgb_matrix_sethsv_noeeprom(color[0], color[1], color[2]);
+    // rgb_matrix_sethsv_noeeprom(color[0], color[1], color[2]);
+    rgb_matrix_set_color_all(0xff, 0xff, 0xff);
    /* 
     if (LOCK_IS_ACTIVE(locks[LCK_RPT].state))
     {
@@ -473,17 +382,67 @@ void set_color(void)
     */
 }
 
+void keyboard_pre_init_user(void) {
+}
+
 void keyboard_post_init_user(void) {
-    rgb_matrix_enable_noeeprom();
+/*    rgb_matrix_enable_noeeprom();
+    eeconfig_disable();
+    // rgb_matrix_enable();
     rgb_matrix_mode_noeeprom(RGB_MATRIX_SOLID_COLOR);
-    rgb_matrix_sethsv_noeeprom(COLOR_BASE);
-    // set_color();
+    // rgb_matrix_mode(RGB_MATRIX_SOLID_COLOR);
+    //rgb_matrix_sethsv_noeeprom(COLOR_BASE);
+  */  set_color(COLOR_BASE);
 }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     bool pressed = record->event.pressed;
+    uint16_t uval;
+
+#if ENABLE_STATS
+    char buf[16];
+    int i, j;
+    keypresses[record->event.key.row][record->event.key.col]++;
+#endif
 
     switch (keycode) {
+    case PROFILE:
+#if ENABLE_PROFILE
+        if (pressed && !profile_active)
+        {
+            profile_active = 1;
+            profile_progress = -1;
+        }
+#endif
+        return false;
+    case STAT_PR:
+#if ENABLE_STATS
+        if (pressed)
+        {
+            for (i = 0; i < MATRIX_ROWS>>1; i++)
+            {
+                for (j = 0; j < MATRIX_COLS; j++)
+                {
+                    snprintf(buf, sizeof(buf), "%6lu ", keypresses[i][j]);
+                    SEND_STRING(buf);
+                }
+                SEND_STRING(" | ");
+                for (j = 0; j < MATRIX_COLS; j++)
+                {
+                    snprintf(buf, sizeof(buf), "%6lu ", keypresses[i + (MATRIX_ROWS>>1)][j]);
+                    SEND_STRING(buf);
+                }
+                SEND_STRING("\n");
+            }
+        }
+#endif
+        return false;
+    case STAT_RS:
+#if ENABLE_STATS
+        if (pressed)
+            memset(keypresses, 0, sizeof(keypresses));
+#endif
+        return false;
         case HEX_PFX:
             if (pressed)
                 SEND_STRING ("0x");
@@ -516,6 +475,8 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             return process_lock(&locks[LCK_ALT], pressed);
         case MOD_UTIL:
             return process_lock(&locks[LCK_UTIL], pressed);
+        case MOD_FN:
+            return process_lock(&locks[LCK_FN], pressed);
         case MOD_LOCK:
             if (pressed)
                 lock(true);
@@ -527,17 +488,34 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             if (pressed)
                 lock(false);
             return true;
-        /*
-        case PT_LF:
-        case PT_DN:
-        case PT_UP:
-        case PT_RT:
-            last_key = keycode;
-            return false;
-        case NXT_FN:
-            next_function = 1;
-            return false;
-        */
+    case PT_LEFT...PT_DOWN:
+      uval = keycode - PT_LEFT;
+      mouse_ctl.sel = (uval & 2) >> 1;
+      mouse_ctl.sign = ~(uval & 1);
+      mouse_ctl.mag = 2;
+      set_lock_state(&locks[LCK_MOUSE], LOCK_STICKY);
+      break;
+    case MOUSE_REV:
+      mouse_ctl.sign ^= 1;
+      break;
+    case MOUSE_DBL:
+      mouse_ctl.mag = 3;
+      break;
+    case MOUSE_HLV:
+      mouse_ctl.mag = 1;
+      break;
+    case MOUSE_ESC:
+      set_lock_state(&locks[LCK_MOUSE], LOCK_OFF);
+      break;
+        /* case PT_LF: */
+        /* case PT_DN: */
+        /* case PT_UP: */
+        /* case PT_RT: */
+        /*     last_key = keycode; */
+        /*     return false; */
+        /* case NXT_FN: */
+        /*     next_function = 1; */
+        /*     return false; */
         case KC_BTN1:
         case KC_BTN2:
             return true;
@@ -553,15 +531,53 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 void matrix_scan_user()
 {
     uint32_t now;
-    //report_mouse_t mouse;
+#if ENABLE_PROFILE
+    uint32_t mean;
+    int32_t variance;
+    uint32_t i;
+    char buf[64];
+#endif
+    /* report_mouse_t mouse; */
 
-    if (LOCK_IS_ACTIVE(locks[LCK_RPT].state) && key_rpt.lock && bin_entry.pressed)
+#if ENABLE_PROFILE
+    if (profile_active)
+    {
+        now = timer_read32();
+        if (profile_progress < 0)
+        {
+            profile_progress = 0;
+            last_sample = now;
+            profile_start = now;
+        }
+        else if (profile_progress < N_SAMPLES)
+        {
+            samples[profile_progress++] = now - last_sample;
+            last_sample = now;
+        }
+        else
+        {
+            profile_active = 0;
+            mean = 0;
+            for (i = 0; i < N_SAMPLES; i++)
+                mean += samples[i];
+            mean /= N_SAMPLES;
+            variance = 0;
+            for (i = 0; i < N_SAMPLES; i++)
+                variance += (samples[i] - mean) * (samples[i] - mean);
+            variance /= N_SAMPLES; 
+            snprintf(buf, sizeof(buf), "m:%lu v:%ld", mean, variance);
+            SEND_STRING(buf);
+        }
+    }
+#endif
+
+    if (bin_entry.pressed && key_rpt.lock && LOCK_IS_ACTIVE(locks[LCK_RPT].state))
     {
         now = timer_read32();
         if (timer_expired32(now, key_rpt.future))
         {
             tap_code16(key_rpt.lock);
-            key_rpt.future = now + (1000 / (bin_entry.pressed << 4));
+            key_rpt.future = now + (1024 / (bin_entry.pressed << 2));
             /*
             memset(&mouse, 0, sizeof(mouse));
             switch (lock_key)
@@ -587,4 +603,28 @@ void matrix_scan_user()
             */
         }
     }
+}
+
+
+void process_mouse(uint8_t val)
+{
+  report_mouse_t report = {0};
+  int8_t ival;
+  // 7 bits
+  // 4 bits
+  // 2 bits
+  ival = val << 3;
+  if (mouse_ctl.sign)
+    ival ^= ~0;
+
+  if (mouse_ctl.sel)
+    report.y = ival;
+  else
+    report.x = ival;
+
+  for (ival = 0; ival < (1 << mouse_ctl.mag); ival++)
+    host_mouse_send(&report);
+
+  /* if (locks[LCK_MOUSE].state == LOCK_STICKY) */
+  /*   locks[LCK_MOUSE].state = LOCK_OFF; */
 }

@@ -5,7 +5,8 @@
 
 #define MOUSE_PERIOD 10
 
-#define COLOR_BASE  HSV_MAGENTA
+typedef uint8_t color_t[3];
+#define COLOR_BASE  ((color_t) { HSV_MAGENTA } )
 #define COLOR_SH    { HSV_RED }
 #define COLOR_ALTS  { HSV_YELLOW }
 #define COLOR_ALT   { HSV_GREEN }
@@ -21,7 +22,14 @@ enum layers {
     BIN,   // binary input
     FN,    // binary fn input
     UTIL,  // util keys
+    MOUSE, // mouse util stuff
 };
+
+#define LYR_BASE  (1 << BASE)
+#define LYR_BIN   (1 << BIN)
+#define LYR_FN    (1 << FN)
+#define LYR_UTIL  (1 << UTIL)
+#define LYR_MOUSE (1 << MOUSE)
 
 enum custom_keycodes {
     VRSN = ML_SAFE_RANGE,
@@ -36,12 +44,19 @@ enum custom_keycodes {
     MOD_LOCK,
     MOD_UNLK,
     HEX_PFX,
-    PT_LF,
-    PT_RT,
+    PT_LEFT,
+    PT_RIGHT,
     PT_UP,
-    PT_DN,
-    NXT_FN,
+    PT_DOWN,
+    MOUSE_REV,
+    MOUSE_DBL,
+    MOUSE_HLV,
+    MOUSE_ESC,
+    MOD_FN,
     MOD_UTIL,
+    PROFILE,
+    STAT_PR,
+    STAT_RS,
 };
 
 enum lock_state {
@@ -62,40 +77,26 @@ enum lock_state {
 struct lock {
     enum lock_state state;
     uint16_t        mods;
-    void          (*set_active)     (struct lock *lock, bool active);
-    bool          (*process_record) (uint16_t keycode);
+    layer_state_t   lyrs;
     uint8_t         color[3];
-    union {
-        uint16_t      _mod;
-        layer_state_t _lyr;
-    };
+    void          (*set_active)  (bool active,      void *data);
+    bool          (*key_pressed) (uint16_t keycode, void *data);
+    void           *cb_data;
 };
 
-void set_active_layer(struct lock *lock, bool active);
-void set_active_mod(struct lock *lock, bool active);
-void set_active_repeat(struct lock *lock, bool active);
-// always pressed
-bool process_record_repeat(uint16_t keycode);
+void set_active_repeat (bool active,      void *data);
+bool key_pressed_repeat(uint16_t keycode, void *data);
 
-#define LOCK_MOD(MOD, CLR) \
-    (struct lock) { \
-        .state = LOCK_OFF, \
-        .mods = 0, \
-        .set_active = &set_active_mod, \
-        .process_record = NULL, \
-        .color = CLR, \
-        ._mod = MOD, \
-    }
-
-#define LOCK_LYR(LYR, CLR) \
-    (struct lock) { \
-        .state = LOCK_OFF, \
-        .mods = 0, \
-        .set_active = &set_active_layer, \
-        .process_record = NULL, \
-        .color = CLR, \
-        ._lyr = LYR, \
-    }
+#define SIMPLE_LOCK(MODS, LYRS, COLOR) \
+    ((struct lock) {                    \
+        .state = LOCK_OFF,              \
+        .mods = MODS,                   \
+        .lyrs =  LYRS,                  \
+        .color = COLOR,                 \
+        .set_active = NULL,             \
+        .key_pressed = NULL,            \
+        .cb_data = NULL,                \
+    })
 
 enum locks {
     LCK_RPT,
@@ -104,6 +105,7 @@ enum locks {
     LCK_SHIFT,
     LCK_CTRL,
     LCK_ALT,
+    LCK_MOUSE,
     LCK_MAX,
 };
 
@@ -119,12 +121,20 @@ struct key_rpt {
     uint32_t future; // for timer
 };
 
+struct mouse_ctl {
+  uint8_t sel  : 1; // 0 = x , 1 = y
+  uint8_t sign : 1; // 0 = pos, 1 = neg
+  uint8_t mag  : 2; // 1-3
+};
+
 void set_lock_state(struct lock *l, enum lock_state state);
 bool process_lock(struct lock *l, bool presesd);
 bool process_bin(uint8_t val, bool pressed, bool fn);
 void send_key(uint16_t kc);
 
 void lock(bool set);
-void set_color(void);
+void set_color(color_t color);
+
+void process_mouse(uint8_t val);
 
 #endif
