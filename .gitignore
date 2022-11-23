@@ -90,3 +90,6 @@ user_song_list.h
 compile_commands.json
 .clangd/
 .cache/
+GPATH
+GRTAGS
+GTAGS
